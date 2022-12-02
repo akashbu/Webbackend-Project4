@@ -1,8 +1,8 @@
 # Required. Path used to access LiteFS from your application.
-mount-dir: "/home/student/Downloads/WebBackendProject2/var/primary/mount"
+mount-dir: "var/primary/mount"
 
 # Optional. Path to store underlying data.
-data-dir: "/home/student/Downloads/WebBackendProject2/var/primary/data"
+data-dir: "var/primary/data"
 
 exec: hypercorn game_service --reload --debug --bind api.local.gd:$PORT --access-logfile - --error-logfile - --log-level DEBUG
 

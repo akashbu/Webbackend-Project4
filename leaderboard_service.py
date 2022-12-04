@@ -12,8 +12,12 @@ r = redis.StrictRedis(host='localhost',port=6379,db=0)
 @app.route("/leaderboard", methods=["GET", "POST"])
 async def update_leaderboard():
     if (request.method == "GET"):
-        top10 = r.zrange(players, 0, 9, desc=True, withscores=True)
-        return jsonify({username.decode('utf-8'): score for username, score in top10})
+        top10 = r.zrevrange(players, 0, 9, withscores=True)
+        result = "Top 10 Leaderboard \n"
+        for element in top10:
+            element = str(element)
+            result = result + element[2:-1] + "\n"
+        return result
     else:
         data = await request.get_json()
         if not data or 'username' not in data or 'is_won' not in data or 'guess' not in data:

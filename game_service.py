@@ -6,7 +6,7 @@ import databases
 import base64
 import dataclasses
 import uuid
-
+import itertools
 import utils.helpers as helpers
 
 from typing import Tuple, Optional
@@ -28,17 +28,35 @@ class Guess:
 class Username:
     username: str
 
-async def _connect_db():
+
+
+db_buffer = ['GAMES', 'GAMES_SECONDARY1', 'GAMES_SECONDARY2']
+DbList = itertools.cycle(db_buffer)
+
+# choose = itertools.cycle()
+
+async def _connect_db_write():
     database = databases.Database(app.config["DATABASES"]["GAMES"])
     await database.connect()
+    print("primary--------------")
     return database
 
+async def _connect_db_read(db):
+    database = databases.Database(app.config["DATABASES"][db])
+    await database.connect()
+    print(db)
+    print("secondary-------------")
+    return database
 
-def _get_db():
+def _get_db_write():
     if not hasattr(g, "sqlite_db"):
-        g.sqlite_db = _connect_db()
+        g.sqlite_db = _connect_db_write()
     return g.sqlite_db
 
+def _get_db_read():
+    if not hasattr(g, "sqlite_db"):
+        g.sqlite_db = _connect_db_read(next(DbList))
+    return g.sqlite_db
 
 @app.teardown_appcontext
 async def close_connection(exception):
@@ -68,17 +86,18 @@ async def start_game():
     """
     username = request.authorization.username
 
-    db =  await _get_db()
+    db_write =  await _get_db_write()
+    db_read = await _get_db_read()
 
     query = "SELECT word FROM secret_word ORDER BY RANDOM() LIMIT 1"
     app.logger.info(query), app.logger.warning(query)
-    secret_word = await db.fetch_one(query=query)
+    secret_word = await db_read.fetch_one(query=query)
 
     try:
         gameid = str(uuid.uuid4())
         query = "INSERT INTO games(gameid, username, secretWord) VALUES(:gameid, :username, :secret_word)"
         values = {"gameid":gameid, "username": username, "secret_word": secret_word.word}
-        await db.execute(query=query, values=values)
+        await db_write.execute(query=query, values=values)
     except sqlite3.IntegrityError as e:
         abort(409, e)
     return helpers.jsonify_message(f"Game started with id: {gameid}.")
@@ -94,12 +113,12 @@ async def list_active_games():
     """
     username = request.authorization.username
 
-    db =  await _get_db()
+    db_read =  await _get_db_read()
     query = """
             SELECT gameid FROM games WHERE username = :username AND isActive = 1
             """
     app.logger.info(query), app.logger.warning(query)
-    games = await db.fetch_all(query=query, values={"username": username})
+    games = await db_read.fetch_all(query=query, values={"username": username})
 
     if games:
         return list(map(dict, games))
@@ -107,12 +126,12 @@ async def list_active_games():
         return helpers.jsonify_message(f"No active games found for user, {username}."), 404
 
 
-async def game_is_active(db, username, gameid) -> bool:
+async def game_is_active(db_read, username, gameid) -> bool:
     query = """
             SELECT * FROM games WHERE username = :username AND gameid = :gameid AND isActive = 1
             """
     app.logger.info(query), app.logger.warning(query)
-    game = await db.fetch_one(query=query, values={"username": username, "gameid": gameid})
+    game = await db_read.fetch_one(query=query, values={"username": username, "gameid": gameid})
     if game:
         return True
     else:
@@ -129,9 +148,9 @@ async def retrieve_game(gameid):
     of attempts left before the game ends.
     """
     username = request.authorization.username
-    db =  await _get_db()
+    db_read =  await _get_db_read()
 
-    if await game_is_active(db, username, gameid):
+    if await game_is_active(db_read, username, gameid):
         query = """
                 SELECT guess, secretWord as secret_word
                 FROM guesses
@@ -177,16 +196,17 @@ async def make_guess(gameid, data: Guess):
     """
     username = request.authorization.username
     data = await request.get_json()
-    db =  await _get_db()
+    db_write =  await _get_db_write()
+    db_read = await _get_db_read()
 
-    if await game_is_active(db, username, gameid):
+    if await game_is_active(db_read, username, gameid):
         # Validate the guessed word first:
         if len(data["guess"]) != app.config["WORDLE"]["WORDLE_LENGTH"]:
             return helpers.jsonify_message(f"Not a valid guess! Please only guess {app.config['WORDLE']['WORDLE_LENGTH']}-letter words. This attempt does not count.")
         else:
             query = "SELECT * FROM valid_words WHERE word = :guess"
             app.logger.info(query), app.logger.warning(query)
-            is_valid = await db.fetch_one(query=query, values={"guess": data["guess"]})
+            is_valid = await db_read.fetch_one(query=query, values={"guess": data["guess"]})
 
             if not is_valid:
                 return helpers.jsonify_message(f"{data['guess']} is not a valid word! Try again. This attempt does not count.")
@@ -196,7 +216,7 @@ async def make_guess(gameid, data: Guess):
             query = """
                     INSERT INTO guesses(gameid, guess) VALUES(:gameid, :guess)
                     """
-            await db.execute(query=query, values={"gameid": gameid, "guess": data["guess"]})
+            await db_write.execute(query=query, values={"gameid": gameid, "guess": data["guess"]})
         except sqlite3.IntegrityError as e:
             # guesses are unique per game
             abort(409, e)
@@ -206,7 +226,7 @@ async def make_guess(gameid, data: Guess):
                 SELECT secretWord AS secret_word FROM games WHERE gameid = :gameid
                 """
         app.logger.info(query), app.logger.warning(query)
-        game = await db.fetch_one(query=query, values={"gameid": gameid})
+        game = await db_read.fetch_one(query=query, values={"gameid": gameid})
         secret_word = game.secret_word 
 
 
@@ -217,7 +237,7 @@ async def make_guess(gameid, data: Guess):
                 WHERE games.gameid = :gameid AND isActive = 1
                 """
         app.logger.info(query), app.logger.warning(query)
-        guesses = await db.fetch_all(query=query, values={"gameid": gameid})
+        guesses = await db_read.fetch_all(query=query, values={"gameid": gameid})
         guesses = calculate_game_status(guesses)
 
         is_correct = helpers.check_guess(data["guess"], secret_word)
@@ -229,7 +249,7 @@ async def make_guess(gameid, data: Guess):
                     SET isActive = 0, hasWon = 1
                     WHERE gameid = :gameid
                     """
-            await db.execute(query=query, values={"gameid": gameid})
+            await db_write.execute(query=query, values={"gameid": gameid})
 
             return helpers.jsonify_message(f"Correct! The answer was {secret_word}.")
         elif guesses["num_guesses"] == max_num_attempts and not is_correct:
@@ -238,7 +258,7 @@ async def make_guess(gameid, data: Guess):
                     SET isActive = 0
                     WHERE gameid = :gameid
                     """
-            await db.execute(query=query, values={"gameid": gameid})
+            await db_write.execute(query=query, values={"gameid": gameid})
             
             return helpers.jsonify_message(f"You have lost! You have made {max_num_attempts} incorrect attempts. The secret word was {secret_word}.")
         else:

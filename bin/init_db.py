@@ -8,6 +8,7 @@ import json
 users_database = Database('sqlite+aiosqlite:///database/users.db')
 games_database = Database('sqlite+aiosqlite:///var/primary/mount/games.db')
 
+
 async def init_users_db():
     await users_database.connect()
 

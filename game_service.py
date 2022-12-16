@@ -8,6 +8,11 @@ import dataclasses
 import uuid
 import itertools
 import utils.helpers as helpers
+import asyncio
+from redis import Redis
+from rq import Queue
+import time
+from job import count_words_at_url
 
 from typing import Tuple, Optional
 from quart import Quart, jsonify, g, request, abort
@@ -36,33 +41,48 @@ DbList = itertools.cycle(db_buffer)
 # choose = itertools.cycle()
 
 async def _connect_db_write():
-    database = databases.Database(app.config["DATABASES"]["GAMES"])
+    database = g._sqlite_db_read = databases.Database(app.config["DATABASES"]["GAMES"])
     await database.connect()
-    print("primary--------------")
+    print("primary database--------------")
     return database
 
-async def _connect_db_read(db):
-    database = databases.Database(app.config["DATABASES"][db])
+async def _connect_db_read():
+    db = next(DbList)
+    database = g._sqlite_db_read = databases.Database(app.config["DATABASES"][db])
     await database.connect()
     print(db)
-    print("secondary-------------")
+    print("secondary database-------------")
     return database
 
-def _get_db_write():
-    if not hasattr(g, "sqlite_db"):
-        g.sqlite_db = _connect_db_write()
-    return g.sqlite_db
+# async def _connect_db_write():
+#     if not hasattr(g, "sqlite_db"):
+#         g.sqlite_db = _connect_db_write()
+#     return g.sqlite_db
 
-def _get_db_read():
-    if not hasattr(g, "sqlite_db"):
-        g.sqlite_db = _connect_db_read(next(DbList))
-    return g.sqlite_db
+# async def _connect_db_read():
+#     if not hasattr(g, "sqlite_db"):
+#         g.sqlite_db = _connect_db_read(next(DbList))
+#     return g.sqlite_db
 
 @app.teardown_appcontext
 async def close_connection(exception):
     db = getattr(g, "_sqlite_db", None)
     if db is not None:
         await db.disconnect()
+
+
+
+
+def worker():
+    q = Queue(connection=Redis())
+    print("Working.......")
+    data = {'username':'Akash', 'is_won': 1, 'guess' : 4}
+    result = q.enqueue(count_words_at_url, 'http://127.0.0.1:3000/dummy', data)
+
+    print(result.result) #Here it will show none output as job is still going on
+    time.sleep(5)
+
+    print(result.result) #Prints the counted words
 
 
 # ----------------------------Routes---------------------------- #
@@ -86,12 +106,13 @@ async def start_game():
     """
     username = request.authorization.username
 
-    db_write =  await _get_db_write()
-    db_read = await _get_db_read()
+    db_read = await _connect_db_read()
 
     query = "SELECT word FROM secret_word ORDER BY RANDOM() LIMIT 1"
     app.logger.info(query), app.logger.warning(query)
     secret_word = await db_read.fetch_one(query=query)
+
+    db_write = await _connect_db_write()
 
     try:
         gameid = str(uuid.uuid4())
@@ -113,7 +134,7 @@ async def list_active_games():
     """
     username = request.authorization.username
 
-    db_read =  await _get_db_read()
+    db_read =  await _connect_db_read()
     query = """
             SELECT gameid FROM games WHERE username = :username AND isActive = 1
             """
@@ -148,7 +169,7 @@ async def retrieve_game(gameid):
     of attempts left before the game ends.
     """
     username = request.authorization.username
-    db_read =  await _get_db_read()
+    db_read =  await _connect_db_read()
 
     if await game_is_active(db_read, username, gameid):
         query = """
@@ -158,11 +179,38 @@ async def retrieve_game(gameid):
                 WHERE games.gameid = :gameid AND isActive = 1
                 """
         app.logger.info(query), app.logger.warning(query)
-        guesses = await db.fetch_all(query=query, values={"gameid": gameid})
+        guesses = await db_read.fetch_all(query=query, values={"gameid": gameid})
 
         return calculate_game_status(guesses)
     else:
         abort(404)
+
+
+#Adding Client url to the database
+@app.route("/gameservice_client_register_url", methods=["POST"])
+async def register_leaderboardservice():
+    data = await request.get_data()
+    url =  data.decode("utf-8")
+    db_write =  await _connect_db_write()
+    db_read = await _connect_db_read()
+
+
+    query = "SELECT url from client_url WHERE url=:url"
+    existing_url = await db_read.fetch_one(query=query, values={"url":url})
+  
+
+    if( not existing_url):
+        try:
+            query = "INSERT INTO client_url(url) VALUES(:url)"
+            values = {"url" : url}
+            await db_write.execute(query=query, values=values)
+            return "Call-back Url Registered", 200
+        except sqlite3.IntegrityError as e:
+            abort(409, e)    
+    else:
+        return "Client URL already exist", 403  
+    
+    
 
 
 def calculate_game_status(guesses):
@@ -196,8 +244,8 @@ async def make_guess(gameid, data: Guess):
     """
     username = request.authorization.username
     data = await request.get_json()
-    db_write =  await _get_db_write()
-    db_read = await _get_db_read()
+    db_write =  await _connect_db_write()
+    db_read = await _connect_db_read()
 
     if await game_is_active(db_read, username, gameid):
         # Validate the guessed word first:
@@ -250,7 +298,7 @@ async def make_guess(gameid, data: Guess):
                     WHERE gameid = :gameid
                     """
             await db_write.execute(query=query, values={"gameid": gameid})
-
+            worker()
             return helpers.jsonify_message(f"Correct! The answer was {secret_word}.")
         elif guesses["num_guesses"] == max_num_attempts and not is_correct:
             query = """

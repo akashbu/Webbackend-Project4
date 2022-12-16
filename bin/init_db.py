@@ -37,6 +37,8 @@ async def init_games_db():
     await games_database.execute(query=query)
     query = "DROP TABLE IF EXISTS valid_words"
     await games_database.execute(query=query)
+    query = "DROP TABLE IF EXISTS client_url"
+    await games_database.execute(query=query)
 
     query = """ 
             CREATE TABLE games (
@@ -73,6 +75,14 @@ async def init_games_db():
             )
             """
     await games_database.execute(query=query)
+
+    query = """ CREATE TABLE client_url ( 
+        id INTEGER PRIMARY KEY, 
+        url TEXT NOT NULL UNIQUE
+        )
+        """
+    await games_database.execute(query=query)
+
     print("Games database has been initialized.")
 
     #Creating Index

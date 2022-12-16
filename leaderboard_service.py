@@ -1,5 +1,7 @@
 import redis
 import toml
+import os
+import httpx
 import utils.helpers as helpers
 from quart import Quart, jsonify, g, request, abort
 app = Quart(__name__)
@@ -8,8 +10,34 @@ players = "Players"
 game_count = "GameCount"
 score_sum = "ScoreSum"
 r = redis.StrictRedis(host='localhost',port=6379,db=0)
+import socket
 
-@app.route("/leaderboard", methods=["GET"])
+
+url = socket.gethostbyname(socket.getfqdn("localhost"))
+port = os.environ.get('PORT')
+print(url)
+print(port)
+
+# Registering call back url with game_service
+def register_url():
+    #Generated Callback Url
+    call_back_url = 'http//' + url + ':' + port + '/leaderboard' 
+    print(call_back_url)
+    #Sending Registering post request
+    response = httpx.post('http://tuffix-vm/gameservice_client_register_url', data = call_back_url)
+    #Register Successfully
+    if (response.status_code == 200):
+        print(response.text)
+        
+
+
+@app.route("/dummy", methods=["POST"])
+async def dummy():
+    data = await request.get_json()
+    print(data)
+    return "Hiii message from leaderboard service"
+
+@app.route("/leaderboard", methods=["POST"])
 async def update_leaderboard():
     data = await request.get_json()
     if not data or 'username' not in data or 'is_won' not in data or 'guess' not in data:
@@ -46,4 +74,9 @@ async def get_rankings():
         element = str(element)
         result = result + element[2:-1] + "\n"
     return result
-    
+
+
+try:
+    register_url()
+except httpx.HTTPError as exc:
+    print(f"HTTP Exception for {exc.request.url} - {exc}")

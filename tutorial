@@ -1,31 +1,39 @@
-upstream wordle { server  127.0.0.1:3100; server  127.0.0.1:3200; server 127.0.0.1:3300; }
+upstream wordle { server  127.0.0.1:3200; server  127.0.0.1:3300; server 127.0.0.1:3400; }
 
 server {
        listen 80;
        listen [::]:80;
 
        server_name tuffix-vm;
-	
-	location /login {
-		proxy_pass http://127.0.0.1:3000/login;	
-	}
-        
-	location / {
+
+        location /login {
+                proxy_pass http://127.0.0.1:3100/login;
+        }
+
+        location / {
             auth_request     /auth;
             auth_request_set $auth_status $upstream_status;
-	    proxy_pass 	     http://wordle;
+            proxy_pass       http://wordle;
         }
-	
+
+        location /gameservice_client_register_url {
+            proxy_pass      http://wordle/gameservice_client_register_url;
+        }
+
         location = /auth {
             internal;
-            proxy_pass              http://127.0.0.1:3000/login;
+            proxy_pass              http://127.0.0.1:3100/login;
             proxy_pass_request_body off;
             proxy_set_header        Content-Length "";
             proxy_set_header        X-Original-URI $request_uri;
         }
-        
-  	location /register {
-            proxy_pass     http://127.0.0.1:3000/register;
+
+        location /register {
+            proxy_pass     http://127.0.0.1:3100/register;
+        }
+
+        location /top10 {
+            proxy_pass     http://127.0.0.1:3000/top10;
         }
 
 }

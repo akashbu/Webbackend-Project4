@@ -15,28 +15,20 @@ import socket
 
 url = socket.gethostbyname(socket.getfqdn("localhost"))
 port = os.environ.get('PORT')
-print(url)
-print(port)
 
 # Registering call back url with game_service
 def register_url():
     #Generated Callback Url
-    call_back_url = 'http//' + url + ':' + port + '/leaderboard' 
-    print(call_back_url)
+    call_back_url = 'http://' + url + ':' + port + '/leaderboard' 
+    data = {'client_name': 'leaderboard_service', 'url' : call_back_url}
     #Sending Registering post request
-    response = httpx.post('http://tuffix-vm/gameservice_client_register_url', data = call_back_url)
+    response = httpx.post('http://tuffix-vm/gameservice_client_register_url', json = data)
     #Register Successfully
-    if (response.status_code == 200):
+    if (response.status_code == '200'):
         print(response.text)
         
 
-
-@app.route("/dummy", methods=["POST"])
-async def dummy():
-    data = await request.get_json()
-    print(data)
-    return "Hiii message from leaderboard service"
-
+#Updating the leaderboard scores
 @app.route("/leaderboard", methods=["POST"])
 async def update_leaderboard():
     data = await request.get_json()
@@ -66,6 +58,7 @@ async def update_leaderboard():
     r.zadd(players, {username: new_score_sum / new_game_count})
     return {username: r.zscore(players, username)}
 
+#Printing Top 10 leaderboard scores 
 @app.route("/top10", methods=["GET"])
 async def get_rankings():
     top10 = r.zrevrange(players, 0, 9, withscores=True)

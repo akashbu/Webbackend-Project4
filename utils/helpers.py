@@ -1,3 +1,6 @@
+import requests
+
+
 # Helper functions:
 
 def jsonify_message(message):
@@ -23,3 +26,10 @@ def check_guess(guess, secret_word):
     else:
         is_correct = False
     return is_correct
+
+def post_to_leaderboard(data, url):
+    try:
+        req = requests.post(url = url, json = data)
+        print(req.status_code)
+    except requests.exceptions.HTTPError:
+        return "Error", req.status_code

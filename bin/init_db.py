@@ -76,10 +76,11 @@ async def init_games_db():
             """
     await games_database.execute(query=query)
 
-    query = """ CREATE TABLE client_url ( 
+    query = """ CREATE TABLE client(
         id INTEGER PRIMARY KEY, 
-        url TEXT NOT NULL UNIQUE
-        )
+        client_name TEXT NOT NULL UNIQUE, 
+        client_url TEXT NOT NULL UNIQUE
+        );
         """
     await games_database.execute(query=query)
 

@@ -1,14 +1,13 @@
-# CPSC 449 - Project 2 - Wordle Mock Backend
+# CPSC 449 - Project 4 - Wordle Mock Backend
 
 This README describes how to run the app and test the various access points.
 
 ### Authors
-Group 18
-Members: 
+Group 14
+Members:
 - Akash Butala (akbutala@csu.fullerton.edu)
-- Wesley Zoroya (wzoroya@csu.fullerton.edu)
-- Sam Le (hle406@csu.fullerton.edu)
-- Parva Parikh (parva.parikh30@csu.fullerton.edu)
+- Roman Barron (romanbarron@csu.fullerton.edu)
+- Jiu Lin (linj_happy@student.csuf.edu)
 
 
 ## Setup
@@ -23,11 +22,13 @@ Members:
 - HTTPie
 - PyTest (including pytest-asyncio)
 - Redis
+- RQ
+- HTTPX
 
 Run the following commands if any of the required libraries are missing:
 ```
-$ sudo snap install httpie
 $ sudo apt update
+$ sudo snap install httpie
 $ sudo apt install --yes python3-pip ruby-foreman sqlite3
 $ python3 -m pip install --upgrade quart[dotenv] click markupsafe Jinja2
 $ python3 -m pip install sqlalchemy==1.4.41
@@ -36,6 +37,8 @@ $ python3 -m pip install pytest pytest-asyncio
 $ sudo apt install nginx
 $ sudo apt install --yes nginx-extras
 $ sudo apt install --yes python3-hiredis
+$ python3 -m pip install rq
+$ python3 -m pip install httpx
 
 ```
 ### Configuring Nginx File
@@ -59,6 +62,10 @@ server {
             auth_request     /auth;
             auth_request_set $auth_status $upstream_status;
             proxy_pass       http://wordle;
+        }
+
+        location /gameservice_client_register_url {
+            proxy_pass      http://wordle/gameservice_client_register_url;
         }
 
         location = /auth {
@@ -86,6 +93,20 @@ After configuration is done restart the the nginx service.
 $ sudo service nginx restart
 
 ```
+
+
+### Configuring Crontab File
+#### Path (/tmp/crontab.LqnZkQ/)
+Unix Cron service will schedule a recurring task to run the `rq requeue` command every 10 minutes ensuring all the jobs that are failed and added to failed queue will eventually execute and scores can be added to Leaderboard Service.
+
+
+```
+$ crontab -e
+Inside the file write following:
+*/10 * * * * run-one rq reque -all --queue default 
+
+```
+
 
 ### Launching the App
 Use the following command to start the app.( 3 game service, 1 leaderboard service and 1 user service will start)
@@ -127,8 +148,11 @@ It contains four tables.
     - this is a lookup table for valid words
     - imported from the official Wordle JSON
     - this includes the secret_words (in contrast to the official Wordle JSON that does not include the secret words in its valid words list)
-
-
+-  `client`
+    - this is to store and retrieve client URLs. The items in the table show:
+    - primary key id
+    - client name
+    - client url
 
 ### User Authentication Routes
 #### Registering a new user
@@ -185,18 +209,29 @@ Return JSON is in the form of:
 http --auth <username>:<password> POST  http://tuffix-vm/wordle/<gameid>/guess guess=<guess_word>
 
 ```
-After verifying that the game is active and is owned by the username in the request, the `guess_word` is processed accordingly. 
+After verifying that the game is active and is owned by the username in the request, the `guess_word` is processed accordingly.
 
 First, the app verifies if it is a valid 5-letter string by checking if it exists in the `valid_words` table. If it does not exist, it will throw an error message accordingly, informing the user that the word is invalid. Invalid words do not affect the number of attempts.
 
 If `guess_word` is valid, the app goes through a series of checks to see if the word is the secret word. If it is not the secret word, it will show the the hints (i.e. which letters in the wrong index and correct index). It will also record this guess as a valid attempt. If the number of guesses reaches the threshold number of attempts, it will end/lock the game (i.e. `isActive = False`). If the the guess was the secret word, it will set the `hasWon` flag to `True`.
 
+The program will utilize Redis Queue (RQ) and UNIX cron service to ensure any user who's game is submitted to Redis Leaderboard after a win or loss. The POST command Leaderboard endpoint will be placed in a queue and will be checked and appended to Failed Registry if POST was unsuccessful. 
+
+#### Register Client URLs
+```
+http://tuffix-vm/gameservice_client_register_url [POST]
+```
+Allowing clients to register the URLs. Client URLs are stored in the database. 
+
+
 ## Redis Leaderboard Route
 #### Populate Leaderboard with data
 ```
-http POST http://127.0.0.1:3000/leaderboard username=<username> is_won=<1,0> guess=<0-6>
+http://127.0.0.1:3000/leaderboard [POST]
 
 ```
+Adds to the Leaderboard if game is won and calculates the score based on the number of guesses.
+
 #### Top10 users
 ```
 http GET http://tuffix-vm/top10
